@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <title>KodaBoard Pro v17 ULTRA</title>
+    <style>
+        :root { --blue: #007AFF; --bg: #f2f2f7; }
+        * { box-sizing: border-box; margin: 0; padding: 0; touch-action: none; -webkit-appearance: none; }
+        body { background: #c6c6c8; font-family: -apple-system, sans-serif; height: 100vh; overflow: hidden; }
+        .kb-universe { display: flex; flex-direction: column; height: 100vh; }
+        .kb-header { height: 55px; background: #fff; display: flex; align-items: center; padding: 0 20px; border-bottom: 1px solid #d1d1d6; z-index: 1000; }
+        .kb-brand { font-weight: 800; font-size: 20px; } .kb-brand span { color: var(--blue); }
+        .kb-tabs { display: flex; gap: 6px; height: 100%; align-items: flex-end; margin: 0 20px; }
+        .tab { padding: 8px 18px; background: #e5e5ea; border: none; border-radius: 12px 12px 0 0; cursor: pointer; font-weight: 700; font-size: 13px; }
+        .tab.active { background: #fff; color: var(--blue); }
+        .kb-body { flex: 1; overflow-y: scroll; padding: 40px; display: flex; justify-content: center; align-items: flex-start; background: #8e8e93; scrollbar-gutter: stable; }
+        /* BARRA LATERALE GIGANTE 60PX */
+        .kb-body::-webkit-scrollbar { width: 60px; }
+        .kb-body::-webkit-scrollbar-track { background: rgba(0,0,0,0.15); border-radius: 30px; margin: 5px; }
+        .kb-body::-webkit-scrollbar-thumb { background: var(--blue); border-radius: 30px; border: 8px solid #8e8e93; box-shadow: inset 0 0 10px rgba(0,0,0,0.2); }
+        #canvas-container { position: relative; width: 1600px; height: 900px; background: #fff; box-shadow: 0 30px 60px rgba(0,0,0,0.3); border-radius: 8px; }
+        canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; touch-action: none; }
+        #temp-canvas { pointer-events: none; z-index: 10; }
+        .kb-footer { position: fixed; bottom: 30px; width: 100%; display: flex; justify-content: center; pointer-events: none; }
+        .kb-dock { background: rgba(255,255,255,0.95); backdrop-filter: blur(25px); padding: 12px 30px; border-radius: 28px; display: flex; gap: 20px; align-items: center; pointer-events: auto; box-shadow: 0 15px 45px rgba(0,0,0,0.2); border: 1px solid rgba(0,0,0,0.05); }
+        .kb-sect { display: flex; align-items: center; gap: 12px; padding: 0 10px; border-right: 1px solid #ddd; }
+        .kb-tool-btn, .kb-btn-top, .kb-select, .kb-circle { border: none; background: #f2f2f7; padding: 10px 16px; border-radius: 12px; font-weight: 700; cursor: pointer; font-size: 14px; }
+        .kb-tool-btn.active { background: var(--blue); color: #fff; }
+        .kb-tool-btn.danger { color: #ff3b30; }
+        .size-ctrl { display: flex; flex-direction: column; align-items: center; font-size: 9px; font-weight: 900; color: #8e8e93; }
+    </style>
+</head>
+<body>
+    <div class="kb-universe">
+        <div class="kb-header">
+            <div class="kb-brand">KodaBoard <span>v17 ULTRA</span></div>
+            <div id="kb-tabs" class="kb-tabs"></div>
+            <button class="kb-btn-top" onclick="board.addPage()">+ Nuova Pagina</button>
+            <div style="flex:1"></div>
+            <button class="kb-btn-top" onclick="board.toggleFS()">⛶ Fullscreen</button>
+        </div>
+        <div class="kb-body"><div id="canvas-container"><canvas id="main-canvas"></canvas><canvas id="temp-canvas"></canvas></div></div>
+        <div class="kb-footer">
+            <div class="kb-dock">
+                <div class="kb-sect"><button class="kb-circle" onclick="board.undo()">↩</button><button class="kb-circle" onclick="board.redo()">↪</button></div>
+                <div class="kb-sect">
+                    <input type="color" id="p-color" value="#000000">
+                    <select id="p-style" class="kb-select">
+                        <option value="1">Penna Studio</option><option value="4">Pennarello</option><option value="9">Neon Light</option>
+                    </select>
+                    <div class="size-ctrl"><span>Tratto</span><input type="range" id="p-size" min="1" max="40" value="3"></div>
+                    <button id="m-pen" class="kb-tool-btn active" onclick="board.setMode('pen')">✏️</button>
+                </div>
+                <div class="kb-sect">
+                    <div class="size-ctrl"><span>Gomma</span><input type="range" id="e-size" min="5" max="250" value="80"></div>
+                    <button id="m-eraser" class="kb-tool-btn" onclick="board.setMode('eraser')">🧽</button>
+                </div>
+                <div class="kb-sect">
+                    <button id="m-sel-del" class="kb-tool-btn" onclick="board.setMode('select-del')">✂️ Elimina</button>
+                    <button id="m-sel-move" class="kb-tool-btn" onclick="board.setMode('select-move')">📐 Trasforma</button>
+                    <button class="kb-tool-btn" onclick="board.extend()">➕ Allunga</button>
+                    <button class="kb-tool-btn danger" onclick="board.clearAll()">Reset</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script>
+        const board = {
+            canvas: null, ctx: null, temp: null, tCtx: null, drawing: false, mode: 'pen', transforming: false,
+            pages: [{ h: 900, hist: [], step: -1, data: null }], cur: 0, pts: [], sel: null,
+            init() {
+                this.canvas = document.getElementById('main-canvas'); this.ctx = this.canvas.getContext('2d', { willReadFrequently: true });
+                this.temp = document.getElementById('temp-canvas'); this.tCtx = this.temp.getContext('2d');
+                this.canvas.width = this.temp.width = 1600; this.canvas.height = this.temp.height = 900;
+                this.ctx.lineCap = 'round'; this.ctx.lineJoin = 'round';
+                this.renderTabs(); this.bindEvents(); this.save();
+            },
+            bindEvents() {
+                const getXY = (e) => {
+                    const r = this.canvas.getBoundingClientRect();
+                    const cx = e.clientX || (e.touches ? e.touches[0].clientX : 0);
+                    const cy = e.clientY || (e.touches ? e.touches[0].clientY : 0);
+                    return { x: (cx - r.left) * (this.canvas.width / r.width), y: (cy - r.top) * (this.canvas.height / r.height) };
+                };
+                this.canvas.onpointerdown = (e) => {
+                    e.preventDefault(); this.canvas.setPointerCapture(e.pointerId);
+                    const p = getXY(e);
+                    if (this.mode.startsWith('select')) {
+                        if (this.sel && this.isInside(p)) { this.transforming = true; this.dragStart = p; }
+                        else { this.sel = { pts: [p], active: true, offset: {x:0, y:0} }; this.tCtx.clearRect(0,0,1600,this.canvas.height); }
+                    } else { this.drawing = true; this.pts = [p]; this.ctx.beginPath(); this.ctx.moveTo(p.x, p.y); }
+                };
+                this.canvas.onpointermove = (e) => {
+                    const p = getXY(e);
+                    if (this.transforming) { this.sel.offset.x += (p.x - this.dragStart.x); this.sel.offset.y += (p.y - this.dragStart.y); this.dragStart = p; this.drawSelectionUI(); return; }
+                    if (this.sel && this.sel.active) { this.sel.pts.push(p); this.drawSelectionUI(); return; }
+                    if (!this.drawing) return; this.pts.push(p); this.drawSmooth();
+                };
+                this.canvas.onpointerup = () => {
+                    if (this.drawing) { this.drawing = false; this.save(); }
+                    if (this.transforming) { this.transforming = false; this.applyTransform(); }
+                    if (this.sel && this.sel.active) { this.sel.active = false; this.processSelection(); }
+                };
+            },
+            drawSmooth() {
+                const size = (this.mode === 'eraser') ? document.getElementById('e-size').value : document.getElementById('p-size').value;
+                this.ctx.lineWidth = size; this.ctx.strokeStyle = (this.mode === 'eraser') ? "#ffffff" : document.getElementById('p-color').value;
+                if (this.pts.length < 3) return;
+                this.ctx.beginPath(); this.ctx.moveTo(this.pts[0].x, this.pts[0].y);
+                for (let i = 1; i < this.pts.length - 2; i++) {
+                    const xc = (this.pts[i].x + this.pts[i + 1].x) / 2;
+                    const yc = (this.pts[i].y + this.pts[i + 1].y) / 2;
+                    this.ctx.quadraticCurveTo(this.pts[i].x, this.pts[i].y, xc, yc);
+                }
+                this.ctx.stroke();
+            },
+            processSelection() {
+                const xs = this.sel.pts.map(p => p.x), ys = this.sel.pts.map(p => p.y);
+                this.sel.minX = Math.min(...xs); this.sel.minY = Math.min(...ys);
+                this.sel.maxX = Math.max(...xs); this.sel.maxY = Math.max(...ys);
+                const w = this.sel.maxX - this.sel.minX, h = this.sel.maxY - this.sel.minY;
+                if (this.mode === 'select-del') {
+                    this.ctx.save(); this.ctx.beginPath(); this.sel.pts.forEach(p => this.ctx.lineTo(p.x, p.y)); this.ctx.closePath();
+                    this.ctx.clip(); this.ctx.clearRect(0, 0, 1600, 3000); this.ctx.restore();
+                    this.sel = null; this.tCtx.clearRect(0,0,1600,3000); this.save();
+                } else if (w > 0 && h > 0) {
+                    this.sel.img = this.ctx.getImageData(this.sel.minX, this.sel.minY, w, h);
+                    this.ctx.clearRect(this.sel.minX, this.sel.minY, w, h); this.drawSelectionUI();
+                }
+            },
+            drawSelectionUI() {
+                this.tCtx.clearRect(0,0,1600,this.canvas.height);
+                this.tCtx.save(); this.tCtx.translate(this.sel.offset.x, this.sel.offset.y);
+                if (this.sel.img) { this.tCtx.putImageData(this.sel.img, this.sel.minX + this.sel.offset.x, this.sel.minY + this.sel.offset.y); }
+                this.tCtx.beginPath(); this.tCtx.setLineDash([6, 6]); this.tCtx.strokeStyle = "#007AFF";
+                this.tCtx.strokeRect(this.sel.minX, this.sel.minY, this.sel.maxX-this.sel.minX, this.sel.maxY-this.sel.minY);
+                this.tCtx.restore();
+            },
+            applyTransform() {
+                if(this.sel && this.sel.img) {
+                    this.ctx.putImageData(this.sel.img, this.sel.minX + this.sel.offset.x, this.sel.minY + this.sel.offset.y);
+                    this.sel = null; this.tCtx.clearRect(0,0,1600,3000); this.save();
+                }
+            },
+            isInside(p) { if(!this.sel) return false; return (p.x >= this.sel.minX + this.sel.offset.x && p.x <= this.sel.maxX + this.sel.offset.x && p.y >= this.sel.minY + this.sel.offset.y && p.y <= this.sel.maxY + this.sel.offset.y); },
+            setMode(m) { this.mode = m; document.querySelectorAll('.kb-tool-btn').forEach(b => b.classList.remove('active')); document.getElementById('m-'+m).classList.add('active'); },
+            extend() {
+                const p = this.pages[this.cur]; const old = this.canvas.toDataURL();
+                p.h += 600; this.canvas.height = this.temp.height = p.h;
+                document.getElementById('canvas-container').style.height = p.h + "px";
+                const img = new Image(); img.src = old; img.onload = () => { this.ctx.lineCap = 'round'; this.ctx.lineJoin = 'round'; this.ctx.drawImage(img, 0, 0); };
+            },
+            save() { const p = this.pages[this.cur]; p.step++; if (p.step < p.hist.length) p.hist.length = p.step; p.hist.push(this.canvas.toDataURL()); },
+            undo() { const p = this.pages[this.cur]; if (p.step > 0) { p.step--; this.load(p.hist[p.step]); } },
+            redo() { const p = this.pages[this.cur]; if (p.step < p.hist.length - 1) { p.step++; this.load(p.hist[p.step]); } },
+            load(data) { const img = new Image(); img.src = data; img.onload = () => { this.ctx.clearRect(0, 0, 1600, 3000); this.ctx.drawImage(img, 0, 0); }; },
+            clearAll() { this.ctx.clearRect(0, 0, 1600, this.canvas.height); this.save(); },
+            addPage() { this.pages[this.cur].data = this.canvas.toDataURL(); this.pages.push({ h: 900, hist: [], step: -1, data: null }); this.cur = this.pages.length - 1; this.refresh(); },
+            refresh() {
+                const p = this.pages[this.cur]; this.canvas.height = this.temp.height = p.h;
+                document.getElementById('canvas-container').style.height = p.h + "px";
+                this.ctx.clearRect(0,0,1600,p.h); if(p.data) { const img = new Image(); img.src = p.data; img.onload = () => this.ctx.drawImage(img, 0, 0); }
+                this.renderTabs();
+            },
+            renderTabs() {
+                const row = document.getElementById('kb-tabs'); row.innerHTML = '';
+                this.pages.forEach((p, i) => {
+                    const b = document.createElement('button'); b.className = `tab ${i === this.cur ? 'active' : ''}`; b.innerText = `P${i+1}`;
+                    b.onclick = () => { board.pages[board.cur].data = board.canvas.toDataURL(); board.cur = i; board.refresh(); };
+                    row.appendChild(b);
+                });
+            },
+            toggleFS() { document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen(); }
+        };
+        board.init();
+    </script>
+</body>
+</html>
